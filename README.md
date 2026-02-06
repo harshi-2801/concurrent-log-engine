@@ -1,90 +1,137 @@
-# Concurrent Log Processing Engine (Java Multithreading)
+# Concurrent Log Processing Engine & Event Ingestion System
 
-## What this project does
-This project reads a large structured log file and produces a summary:
-- counts by log level (INFO/WARN/ERROR)
-- counts by source (serviceA/serviceB/serviceC)
-- counts by message
+This project demonstrates a backend-focused, systems-oriented application consisting of a high-performance concurrent log processing engine (Java), a Spring Boot backend API for event ingestion, and a native C++ client that publishes events over HTTP. The system is validated end-to-end with benchmarking, performance analysis, and persistent storage.
 
-It includes:
-- a single-thread baseline
-- a multithreaded version using a fixed thread pool (ExecutorService)
-- benchmarking to compare performance
+The project showcases Java backend development, concurrency, REST APIs, client–server communication, and system-level design.
 
----
+## Architecture Overview
 
-## Log format
-Each line in the log file looks like this:
+C++ Client  --->  Spring Boot API  --->  In-memory + File Storage  
+                      |  
+                      └── Health Monitoring (Actuator)
 
-timestamp | LEVEL | source | message
+## Java Backend (Spring Boot)
 
-Example:
-2026-02-05T10:12:30Z | ERROR | serviceA | Disk read failure
+The Java backend is implemented using Spring Boot and exposes REST APIs for event ingestion and retrieval. Events are stored in memory for fast access and appended to disk for persistence.
 
----
+### Features
+- RESTful API for ingesting and querying events
+- In-memory storage for recent events
+- Persistent storage using JSON Lines format
+- Health endpoint for observability
 
-## How to run
+### Endpoints
 
-### 1) Generate a large log file
-Run:
-- `LogGenerator.main()`
+| Method | Endpoint | Description |
+|------|---------|-------------|
+| POST | /events | Ingest a new event |
+| GET | /events?limit=N | Fetch last N ingested events |
+| GET | /actuator/health | Service health check |
 
-Output file:
-- `sample-logs/big.log`
+### Event Format (JSON)
 
-### 2) Run benchmark (single vs multi-thread)
-Run:
-- `BenchmarkRunner.main()`
+{
+  "timestamp": "2026-02-06T21:00:00Z",
+  "level": "ERROR",
+  "source": "serviceA",
+  "message": "Disk read failure"
+}
 
-This prints performance for:
-- 1 thread (single-thread baseline)
-- 2 threads
-- 4 threads
-- 8 threads
+### Running the Backend
 
----
+Run the JavaBackendApplication class from IntelliJ.
 
-## Benchmark results (500,000 lines)
+Verify service health using:
+curl http://localhost:8080/actuator/health
 
-| Mode | Threads | Time (ms) | Throughput (lines/sec) |
-|------|---------|-----------|------------------------|
-| single-thread | 1 | 454 | 1,101,321 |
-| multi-thread  | 2 | 268 | 1,865,671 |
-| multi-thread  | 4 | 149 | 3,355,704 |
-| multi-thread  | 8 | 177 | 2,824,858 |
+Expected response:
+{"status":"UP"}
 
-Observation:
-- 4 threads performed best on my machine.
-- 8 threads was slower due to thread overhead and resource contention.
+### Testing the Backend with curl
 
----
+POST an event:
+curl -i -X POST http://localhost:8080/events \
+  -H "Content-Type: application/json" \
+  -d '{"timestamp":"2026-02-06T20:30:00Z","level":"ERROR","source":"serviceA","message":"Disk read failure"}'
+
+GET recent events:
+curl "http://localhost:8080/events?limit=5"
+
+## C++ Client (libcurl)
+
+A lightweight native C++ client is implemented using libcurl to publish structured JSON events to the Java backend via HTTP.
+
+### Build
+g++ -std=c++17 cpp-client/main.cpp -o cpp-client/client $(curl-config --cflags --libs)
+
+### Run
+./cpp-client/client
+
+Verify ingestion:
+curl "http://localhost:8080/events?limit=5"
+
+The returned events should include an entry with source set to "cpp-client".
+
+## Concurrent Log Processing Engine (Java)
+
+A high-performance log processing engine processes large structured log files using both single-threaded and multi-threaded execution models.
+
+### Features
+- Java concurrency utilities (ExecutorService, thread pools)
+- Configurable thread counts
+- Throughput and latency benchmarking
+- Structured aggregation (level counts, source counts, message counts)
+- JSON output generation
+
+### Benchmark Results (500,000 lines)
+
+| Threads | Time (ms) | Throughput (lines/sec) |
+|--------|-----------|------------------------|
+| 1 | 454 | 1,101,321 |
+| 2 | 268 | 1,865,671 |
+| 4 | 149 | 3,355,704 |
+| 8 | 177 | 2,824,858 |
+
+Observation: Performance improved up to 4 threads, after which scheduling and coordination overhead reduced efficiency.
+
 ### Benchmark Results (1,000,000 lines)
 
-| Mode | Threads | Time (ms) | Throughput (lines/sec) |
-|------|---------|-----------|------------------------|
-| Single-thread | 1 | 692 | 1,445,086 |
-| Multi-thread | 2 | 452 | 2,212,389 |
-| Multi-thread | 4 | 294 | 3,401,360 |
-| Multi-thread | 8 | 187 | 5,347,593 |
+| Threads | Time (ms) | Throughput (lines/sec) |
+|--------|-----------|------------------------|
+| 1 | 692 | 1,445,086 |
+| 2 | 452 | 2,212,389 |
+| 4 | 294 | 3,401,360 |
+| 8 | 187 | 5,347,593 |
 
-### Observations
-- Throughput increased with higher thread counts for larger workloads.
-- For the 1,000,000-line input, 8 threads achieved the highest throughput.
-- Compared to smaller workloads, thread scheduling overhead was outweighed by improved CPU utilization.
-- This demonstrates that optimal concurrency levels depend on workload size and system characteristics.
-  
----
+Observation: For larger workloads, higher thread counts improved throughput due to better CPU utilization.
 
-## Design choices (simple explanation)
-- Used `ExecutorService` to reuse a fixed number of threads safely.
-- Split the log file into batches (10,000 lines per batch).
-- Each thread processes a batch and returns its own counts.
-- Final results are merged at the end to avoid race conditions.
+## Data Persistence
 
----
+All ingested backend events are stored in a file named received-events.jsonl. Each line in the file represents a single JSON event, enabling easy inspection, replay, and offline analysis.
 
-## Files / classes
-- `LogGenerator` generates sample logs
-- `SingleThreadAnalyzer` processes logs using 1 thread
-- `MultiThreadAnalyzer` processes logs using a thread pool
-- `BenchmarkRunner` runs performance comparisons
+Example:
+cat received-events.jsonl | tail -n 5
+
+## Key Engineering Concepts Demonstrated
+
+- Java backend development with Spring Boot
+- REST API design and validation
+- Concurrency and multithreading
+- Client–server communication
+- Native C++ integration
+- Performance benchmarking and analysis
+- Observability and health checks
+- Clean package structure and separation of concerns
+
+## Future Enhancements
+
+- Kafka-based streaming ingestion
+- Database-backed storage (PostgreSQL)
+- Containerization with Docker
+- Kubernetes deployment
+- Authentication and authorization
+- Metrics and monitoring dashboards
+
+## Summary
+
+This project demonstrates an end-to-end system combining Java backend services, concurrency-focused log processing, and native C++ client integration. The design emphasizes correctness, performance, and maintainability while remaining simple and extensible.
